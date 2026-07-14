@@ -138,26 +138,16 @@ public static class Mp4Parser
             else if (boxType is "encv" or "avc1" or "avc3" or "hev1" or "hvc1" or "dvh1" or "dvhe" or "vp09" or "av01")
             {
                 if (ctx.CurrentTrack != null)
-                {
-                    ctx.CurrentTrack.Codec = NormalizeSampleEntryCodec(boxType);
-                    // FIXED: Only trigger DRM tags for actual encrypted payload atoms
-                    ctx.CurrentTrack.IsDrm = boxType is "encv";
-                    // Prefer VisualSampleEntry coded size over tkhd display size (matches MediaInfo).
-                    TryReadVisualSampleEntryResolution(fs, dataSize, ctx.CurrentTrack);
-                }
+                    ParseVisualSampleEntry(fs, dataSize, boxType, isVerbose, depth, ctx);
                 else
-                {
                     fs.Seek(dataSize, SeekOrigin.Current);
-                }
             }
             else if (boxType is "enca" or "mp4a" or "ac-3" or "ec-3" or "Opus" or "fLaC")
             {
                 if (ctx.CurrentTrack != null)
-                {
-                    ctx.CurrentTrack.Codec = NormalizeSampleEntryCodec(boxType);
-                    ctx.CurrentTrack.IsDrm = boxType is "enca";
-                }
-                fs.Seek(dataSize, SeekOrigin.Current);
+                    ParseAudioSampleEntry(fs, dataSize, boxType, isVerbose, depth, ctx);
+                else
+                    fs.Seek(dataSize, SeekOrigin.Current);
             }
             else if (boxType is "tx3g" or "text" or "stpp" or "wvtt" or "c608" or "c708" or "mp4s" or "enct")
             {
@@ -170,6 +160,14 @@ public static class Mp4Parser
                 }
                 fs.Seek(dataSize, SeekOrigin.Current);
             }
+            else if (boxType == "frma")
+            {
+                ParseFrma(fs, dataSize, ctx);
+            }
+            else if (boxType == "mdhd")
+            {
+                ParseMdhd(fs, dataSize, ctx);
+            }
             else if (Array.Exists(ContainerBoxes, c => c == boxType))
             {
                 long skip = (boxType == "stsd") ? 8 : 0;
@@ -181,6 +179,129 @@ public static class Mp4Parser
             else fs.Seek(dataSize, SeekOrigin.Current);
         }
     }
+
+    /// <summary>
+    /// VisualSampleEntry fixed header is 78 bytes; children (sinf/frma/avcC/…) follow.
+    /// </summary>
+    private static void ParseVisualSampleEntry(Stream fs, long dataSize, string boxType, bool isVerbose, int depth, ParseContext ctx)
+    {
+        long end = fs.Position + dataSize;
+        var track = ctx.CurrentTrack!;
+        track.Codec = NormalizeSampleEntryCodec(boxType);
+        track.IsDrm = boxType is "encv";
+
+        const int VisualFixed = 78;
+        if (dataSize < 28)
+        {
+            fs.Seek(end, SeekOrigin.Begin);
+            return;
+        }
+
+        byte[] head = new byte[(int)Math.Min(dataSize, VisualFixed)];
+        fs.ReadExactly(head, 0, head.Length);
+        ushort width = BinaryPrimitives.ReadUInt16BigEndian(head.AsSpan(24, 2));
+        ushort height = BinaryPrimitives.ReadUInt16BigEndian(head.AsSpan(26, 2));
+        if (width > 0 && height > 0)
+            track.Resolution = $"{width}x{height}";
+
+        if (head.Length < VisualFixed)
+        {
+            fs.Seek(end, SeekOrigin.Begin);
+            return;
+        }
+
+        // Nested boxes: sinf → frma (original fourcc under DRM), avcC, etc.
+        if (fs.Position < end)
+            ParseBoxes(fs, end, depth + 1, isVerbose, ctx);
+        fs.Seek(end, SeekOrigin.Begin);
+    }
+
+    /// <summary>
+    /// AudioSampleEntry fixed header is 28 bytes (includes channel count + sample rate);
+    /// children (sinf/frma/esds/dec3/…) follow. Channel count is cleartext even for enca.
+    /// </summary>
+    private static void ParseAudioSampleEntry(Stream fs, long dataSize, string boxType, bool isVerbose, int depth, ParseContext ctx)
+    {
+        long end = fs.Position + dataSize;
+        var track = ctx.CurrentTrack!;
+        track.Codec = NormalizeSampleEntryCodec(boxType);
+        track.IsDrm = boxType is "enca";
+
+        const int AudioFixed = 28;
+        if (dataSize < AudioFixed)
+        {
+            fs.Seek(end, SeekOrigin.Begin);
+            return;
+        }
+
+        byte[] head = new byte[AudioFixed];
+        fs.ReadExactly(head, 0, AudioFixed);
+        int channels = BinaryPrimitives.ReadUInt16BigEndian(head.AsSpan(16, 2));
+        if (channels > 0)
+        {
+            track.Channels = channels;
+            track.ChannelLayout = FormatChannelLayout(channels);
+        }
+
+        if (fs.Position < end)
+            ParseBoxes(fs, end, depth + 1, isVerbose, ctx);
+        fs.Seek(end, SeekOrigin.Begin);
+    }
+
+    private static void ParseFrma(Stream fs, long dataSize, ParseContext ctx)
+    {
+        if (dataSize < 4 || ctx.CurrentTrack == null)
+        {
+            fs.Seek(dataSize, SeekOrigin.Current);
+            return;
+        }
+
+        byte[] fourcc = new byte[4];
+        fs.ReadExactly(fourcc, 0, 4);
+        string original = Encoding.ASCII.GetString(fourcc);
+        // Replace encv/enca with the clear original format when present.
+        ctx.CurrentTrack.Codec = NormalizeSampleEntryCodec(original);
+        if (dataSize > 4)
+            fs.Seek(dataSize - 4, SeekOrigin.Current);
+    }
+
+    private static void ParseMdhd(Stream fs, long dataSize, ParseContext ctx)
+    {
+        if (dataSize < 20 || ctx.CurrentTrack == null)
+        {
+            fs.Seek(dataSize, SeekOrigin.Current);
+            return;
+        }
+
+        byte[] buf = new byte[(int)Math.Min(dataSize, 32)];
+        fs.ReadExactly(buf, 0, buf.Length);
+        byte version = buf[0];
+        // language is packed ISO-639-2/T after timescale+duration
+        int langOffset = version == 1 ? 4 + 8 + 8 + 4 + 8 : 4 + 4 + 4 + 4 + 4;
+        if (langOffset + 2 <= buf.Length)
+        {
+            int packed = (buf[langOffset] << 8) | buf[langOffset + 1];
+            char c1 = (char)(0x60 + ((packed >> 10) & 0x1F));
+            char c2 = (char)(0x60 + ((packed >> 5) & 0x1F));
+            char c3 = (char)(0x60 + (packed & 0x1F));
+            string lang = new string([c1, c2, c3]);
+            if (lang is not ("und" or "\0\0\0"))
+                ctx.CurrentTrack.Language = lang;
+        }
+
+        if (dataSize > buf.Length)
+            fs.Seek(dataSize - buf.Length, SeekOrigin.Current);
+    }
+
+    /// <summary>Common layouts; otherwise fall back to "Nch".</summary>
+    private static string FormatChannelLayout(int channels) => channels switch
+    {
+        1 => "1.0",
+        2 => "2.0",
+        6 => "5.1",
+        8 => "7.1",
+        _ => $"{channels}ch"
+    };
 
     private static void ParseMvhd(Stream fs, long dataSize, ParseContext ctx)
     {
@@ -247,7 +368,6 @@ public static class Mp4Parser
 
     /// <summary>
     /// Maps ISO BMFF sample-entry fourccs to the same human-readable labels used by MKV/M2TS.
-    /// Encrypted entries (encv/enca) keep their fourcc; the DRM flag carries the protection state.
     /// </summary>
     private static string NormalizeSampleEntryCodec(string boxType) => boxType switch
     {
@@ -268,33 +388,9 @@ public static class Mp4Parser
         "c608" => "CEA-608",
         "c708" => "CEA-708",
         "mp4s" => "MPEG-4 Systems",
-        "enct" => "enct",
+        "encv" or "enca" or "enct" => boxType, // replaced by frma when present
         _ => boxType
     };
-
-    /// <summary>
-    /// Reads width/height from a VisualSampleEntry payload (avc1/hev1/encv/…).
-    /// Layout: SampleEntry(8) + pre_defined/reserved(16) + width(2) + height(2).
-    /// </summary>
-    private static void TryReadVisualSampleEntryResolution(Stream fs, long dataSize, TrackInfo track)
-    {
-        if (dataSize < 28)
-        {
-            fs.Seek(dataSize, SeekOrigin.Current);
-            return;
-        }
-
-        byte[] buf = new byte[28];
-        fs.ReadExactly(buf, 0, 28);
-        ushort width = BinaryPrimitives.ReadUInt16BigEndian(buf.AsSpan(24, 2));
-        ushort height = BinaryPrimitives.ReadUInt16BigEndian(buf.AsSpan(26, 2));
-        if (width > 0 && height > 0)
-        {
-            track.Resolution = $"{width}x{height}";
-        }
-
-        fs.Seek(dataSize - 28, SeekOrigin.Current);
-    }
 
     private static void ParseHandler(Stream fs, int dataSize, ParseContext ctx)
     {
@@ -335,14 +431,18 @@ public static class Mp4Parser
                 : track.Type == "Subtitle Track" ? ConsoleColor.Gray
                 : ConsoleColor.Green;
 
-            bool hasData = !string.IsNullOrEmpty(track.Codec) || !string.IsNullOrEmpty(track.Resolution);
+            string layoutPart = !string.IsNullOrEmpty(track.ChannelLayout) ? $" {track.ChannelLayout}" : "";
+            string codecPart = track.Codec + layoutPart;
+            bool hasData = !string.IsNullOrEmpty(codecPart) || !string.IsNullOrEmpty(track.Resolution);
             string typeLabel = track.Type + (hasData ? ":" : "");
 
             string resPart = (track.HandlerCode == "vide" && !string.IsNullOrEmpty(track.Resolution)) ? $" [{track.Resolution}]" : "";
-            string codecPart = track.Codec;
             string drm = track.IsDrm ? " [DRM-protected]" : "";
+            string langPart = !string.IsNullOrEmpty(track.Language) && track.Language is not ("eng" or "und")
+                ? $" ({track.Language})"
+                : "";
 
-            Console.WriteLine($"    -> {typeLabel,-16} {codecPart}{resPart}{drm}");
+            Console.WriteLine($"    -> {typeLabel,-16} {codecPart}{resPart}{drm}{langPart}");
             Console.ResetColor();
         }
     }
