@@ -8,8 +8,8 @@ It parses container metadata only (no full decode), so it stays fast even on lar
 
 | Extension | Container | What is reported |
 |-----------|-----------|------------------|
-| `.mp4` | ISO BMFF / MP4 (including fragmented MP4) | Brand, duration, bitrate, tracks, codecs, resolution, DRM flags |
-| `.mkv` | Matroska / WebM | DocType, duration, bitrate, tracks, codecs, resolution, language |
+| `.mp4` | ISO BMFF / MP4 (including fragmented MP4) | Brand, duration, bitrate, tracks, codecs (including original format under DRM), resolution, channel layout, language, DRM flags |
+| `.mkv` | Matroska / WebM | DocType, duration, bitrate, tracks, codecs, resolution, channel layout, language |
 | `.m2ts` | Blu-ray MPEG-TS (192-byte packets) | Duration (via PCR), bitrate, tracks, codecs, video resolution |
 
 ## Requirements
@@ -76,10 +76,11 @@ mls --cold large.m2ts
 
 - Locates the `moov` atom (supports 32- and 64-bit sizes)
 - Reads duration from `mvhd`, with fallback to fragmented duration in `mehd` / `mvex`
-- Walks tracks via `trak` → `tkhd` (display size fallback), `hdlr` (type), sample entries (`avc1`, `hev1`, `hvc1`, `dvh1`, `mp4a`, encrypted `encv`/`enca`)
+- Walks tracks via `trak` → `tkhd` (display size fallback), `mdhd` (language), `hdlr` (type), sample entries
 - Prefers VisualSampleEntry coded width/height over `tkhd` display size when available
-- Maps sample-entry fourccs (`avc1`, `hev1`, `mp4a`, …) to the same labels as MKV/M2TS; `encv`/`enca` stay as-is with a DRM flag
-- Flags DRM-protected tracks when encrypted sample entries are present
+- Maps sample-entry fourccs to shared labels (`avc1` → H.264/AVC, `mp4a` → AAC, `ec-3` → E-AC3, …)
+- For DRM (`encv`/`enca`), reads `frma` for the original format and keeps a `[DRM-protected]` flag
+- Reports audio channel layout from AudioSampleEntry (e.g. `2.0`, `5.1`) when present
 - Computes average bitrate from file size ÷ duration (duration line is opt-in via `-d`)
 
 ### Matroska / WebM (`MkvParser`)
@@ -87,15 +88,16 @@ mls --cold large.m2ts
 - Validates the EBML header and DocType (`matroska` vs `webm`)
 - Parses `Info` (timecode scale, duration) and `Tracks` only — stops at the first `Cluster` to minimize I/O
 - Maps CodecIDs (and VFW FOURCC / ACM tags) to the same human-readable labels used for M2TS
-- Reports track language when present
+- Reports audio channel layout (`Audio` / `Channels`) and track language when present
+- Hides subtitle tracks by default (`-s` / `--subtitles` to show them)
 
 ### M2TS (`M2tsParser`)
 
 - Scans 192-byte Blu-ray transport packets
 - Resolves PAT → PMT for the program map and elementary stream types
-- Estimates duration from first/last PCR on the PCR PID
+- Estimates duration from first/last PCR on the PCR PID (EOF window ~512 KB)
 - Extracts video resolution from elementary stream headers (MPEG-2, VC-1, H.264 SPS, H.265 SPS)
-- Hides subtitle tracks by default in the summary (parser still collects them)
+- Hides subtitle tracks by default (`-s` / `--subtitles` to show them)
 
 ## Project layout
 
