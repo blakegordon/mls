@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="340" viewBox="0 0 1120 340" role="img" aria-label="Example mls terminal output">
+  <title>Example mls terminal output</title>
+  <rect x="0.5" y="0.5" width="1119" height="339" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <g font-family="Consolas, Cascadia Mono, SF Mono, Menlo, Liberation Mono, monospace" font-size="24" xml:space="preserve">
+    <text x="22" y="40">
+      <tspan fill="#8b949e">E&gt;</tspan><tspan fill="#c9d1d9"> mls Zero Days_SMIDFD0CCB09-0100-11DB-89CA-0019B92A3933.mp4</tspan>
+    </text>
+    <text x="22" y="90" fill="#c9d1d9">--- Zero Days_SMIDFD0CCB09-0100-11DB-89CA-0019B92A3933.mp4 ---</text>
+    <text x="22" y="118" fill="#c9d1d9">  Format:               iso6 (MP4 Base Media version 6)</text>
+    <text x="22" y="146" fill="#c9d1d9">  Duration:             113 min 46 sec</text>
+    <text x="22" y="174" fill="#c9d1d9">  Bitrate:              3.94 Mbps</text>
+    <text x="22" y="202" fill="#c9d1d9">  Tracks:</text>
+    <text x="22" y="230" fill="#39c5cf">    -&gt; Video Track:     encv [1280x720] [DRM-protected]</text>
+    <text x="22" y="258" fill="#3fb950">    -&gt; Audio Track:     enca [DRM-protected]</text>
+    <text x="22" y="286" fill="#3fb950">    -&gt; Audio Track:     enca [DRM-protected]</text>
+  </g>
+</svg>
