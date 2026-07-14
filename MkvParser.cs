@@ -233,6 +233,28 @@ class MkvParser
                     else ms.Seek((long)vlen, SeekOrigin.Current);
                 }
             }
+            else if (id == 0xE1) // Audio
+            {
+                long aEnd = ms.Position + (long)len;
+                while (ms.Position < aEnd)
+                {
+                    var (aid, _) = ReadVint(ms, false);
+                    var (alen, _) = ReadVint(ms, true);
+                    if (aid == 0x9F) // Channels (Matroska element 0x9F)
+                    {
+                        int channels = (int)ReadUint(ms, (int)alen);
+                        if (channels > 0)
+                        {
+                            track.Channels = channels;
+                            track.ChannelLayout = FormatChannelLayout(channels);
+                        }
+                    }
+                    else
+                    {
+                        ms.Seek((long)alen, SeekOrigin.Current);
+                    }
+                }
+            }
             else
             {
                 ms.Seek((long)len, SeekOrigin.Current);
@@ -270,6 +292,16 @@ class MkvParser
 
         if (pWidth > 0 && pHeight > 0) track.Resolution = $"{pWidth}x{pHeight}";
     }
+
+    /// <summary>Same layout labels as the MP4 path (2.0 / 5.1 / …).</summary>
+    private static string FormatChannelLayout(int channels) => channels switch
+    {
+        1 => "1.0",
+        2 => "2.0",
+        6 => "5.1",
+        8 => "7.1",
+        _ => $"{channels}ch"
+    };
 
     /// <summary>
     /// Maps Matroska CodecIDs to the same human-readable labels used by the M2TS parser.
@@ -349,10 +381,13 @@ class MkvParser
 
             Console.ForegroundColor = track.Type == "Video Track" ? ConsoleColor.Cyan : track.Type == "Audio Track" ? ConsoleColor.Green : ConsoleColor.Gray;
 
-            string langPart = !string.IsNullOrEmpty(track.Language) && track.Language != "eng" ? $" ({track.Language})" : "";
+            string layoutPart = !string.IsNullOrEmpty(track.ChannelLayout) ? $" {track.ChannelLayout}" : "";
+            string langPart = !string.IsNullOrEmpty(track.Language) && track.Language is not ("eng" or "und")
+                ? $" ({track.Language})"
+                : "";
             string resPart = !string.IsNullOrEmpty(track.Resolution) ? $" [{track.Resolution}]" : "";
 
-            Console.WriteLine($"    -> {track.Type,-16} {track.Codec}{resPart}{langPart}");
+            Console.WriteLine($"    -> {track.Type,-16} {track.Codec}{layoutPart}{resPart}{langPart}");
             Console.ResetColor();
         }
     }
