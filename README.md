@@ -32,13 +32,14 @@ dotnet publish -c Release -o ./publish
 ## Usage
 
 ```text
-mls [-v] [-d] [--cold] <path_to_file_or_wildcard>
+mls [-v] [-d] [-s] [--cold] <path_to_file_or_wildcard>
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-v`, `--verbose` | For MP4, print structural box names/sizes while parsing |
 | `-d`, `--duration` | Include media duration in the summary (bitrate is always shown when known) |
+| `-s`, `--subtitles` | Include subtitle tracks (hidden by default) |
 | `--cold` | Evict the file from the Windows standby cache before parsing (useful for cold-read timing / I/O experiments) |
 
 Paths may be a single file or a shell-style wildcard (e.g. `*.mp4`).
@@ -54,6 +55,9 @@ mls *.mkv
 
 # Include duration
 mls -d movie.mp4
+
+# Include subtitle tracks
+mls -s movie.mp4
 
 # Verbose MP4 box walk
 mls -v clip.mp4

@@ -8,7 +8,7 @@ public static class Mp4Parser
     // NEW: Added "mvex" to the container list so we can step inside it!
     private static readonly string[] ContainerBoxes = ["moov", "trak", "mdia", "minf", "stbl", "stsd", "sinf", "mvex"];
 
-    public static void Parse(string filePath, bool isVerbose, bool showDuration)
+    public static void Parse(string filePath, bool isVerbose, bool showDuration, bool showSubtitles)
     {
         using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.RandomAccess);
         if (fs.Length < 8) return;
@@ -59,7 +59,7 @@ public static class Mp4Parser
             using var memoryStream = new MemoryStream(moovBuffer);
             ParseBoxes(memoryStream, Size, 0, isVerbose, context);
 
-            PrintConsolidatedSummary(context, showDuration);
+            PrintConsolidatedSummary(context, showDuration, showSubtitles);
         }
     }
 
@@ -159,6 +159,17 @@ public static class Mp4Parser
                 }
                 fs.Seek(dataSize, SeekOrigin.Current);
             }
+            else if (boxType is "tx3g" or "text" or "stpp" or "wvtt" or "c608" or "c708" or "mp4s" or "enct")
+            {
+                if (ctx.CurrentTrack != null)
+                {
+                    ctx.CurrentTrack.Codec = NormalizeSampleEntryCodec(boxType);
+                    ctx.CurrentTrack.IsDrm = boxType is "enct";
+                    if (string.IsNullOrEmpty(ctx.CurrentTrack.Type) || ctx.CurrentTrack.Type == "Unknown")
+                        ctx.CurrentTrack.Type = "Subtitle Track";
+                }
+                fs.Seek(dataSize, SeekOrigin.Current);
+            }
             else if (Array.Exists(ContainerBoxes, c => c == boxType))
             {
                 long skip = (boxType == "stsd") ? 8 : 0;
@@ -250,6 +261,14 @@ public static class Mp4Parser
         "ec-3" => "E-AC3",
         "Opus" => "Opus",
         "fLaC" => "FLAC",
+        "tx3g" => "3GPP Timed Text",
+        "text" => "QuickTime Text",
+        "stpp" => "TTML",
+        "wvtt" => "WebVTT",
+        "c608" => "CEA-608",
+        "c708" => "CEA-708",
+        "mp4s" => "MPEG-4 Systems",
+        "enct" => "enct",
         _ => boxType
     };
 
@@ -287,12 +306,12 @@ public static class Mp4Parser
             ctx.CurrentTrack.HandlerCode = h;
             ctx.CurrentTrack.Type = h == "vide" ? "Video Track" :
                                     h == "soun" ? "Audio Track" :
-                                    (h == "text" || h == "subt" || h == "sbtl") ? "Subtitle Track" :
+                                    (h == "text" || h == "subt" || h == "sbtl" || h == "clcp") ? "Subtitle Track" :
                                     $"Track ({h})";
         }
     }
 
-    private static void PrintConsolidatedSummary(ParseContext ctx, bool showDuration)
+    private static void PrintConsolidatedSummary(ParseContext ctx, bool showDuration, bool showSubtitles)
     {
         Console.WriteLine($"  {"Format:",-21} {ctx.MajorBrand}{ctx.BrandExplanation}");
 
@@ -310,7 +329,11 @@ public static class Mp4Parser
 
         foreach (var track in ctx.Tracks)
         {
-            Console.ForegroundColor = track.HandlerCode == "vide" ? ConsoleColor.Cyan : ConsoleColor.Green;
+            if (!showSubtitles && track.Type == "Subtitle Track") continue;
+
+            Console.ForegroundColor = track.HandlerCode == "vide" ? ConsoleColor.Cyan
+                : track.Type == "Subtitle Track" ? ConsoleColor.Gray
+                : ConsoleColor.Green;
 
             bool hasData = !string.IsNullOrEmpty(track.Codec) || !string.IsNullOrEmpty(track.Resolution);
             string typeLabel = track.Type + (hasData ? ":" : "");
