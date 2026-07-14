@@ -49,7 +49,7 @@ class MkvParser
         {
             try
             {
-                ProcessFile(file, showAll);
+                ProcessFile(file, showAll, false);
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException)
             {
@@ -59,7 +59,7 @@ class MkvParser
         return 0;
     }
 
-    public static void ProcessFile(string file, bool showAll)
+    public static void ProcessFile(string file, bool showAll, bool showDuration)
     {
         Console.WriteLine($"\n--- {Path.GetFileName(file)} ---");
 
@@ -125,7 +125,7 @@ class MkvParser
             }
         }
 
-        PrintSummary(context, showAll);
+        PrintSummary(context, showAll, showDuration);
     }
 
     // --- The "Slurp" Mechanism ---
@@ -189,7 +189,7 @@ class MkvParser
             }
             else if (id == 0x86) // CodecID
             {
-                track.Codec = ReadString(ms, (int)len).Replace("V_", "").Replace("A_", "").Replace("S_", "");
+                track.Codec = NormalizeCodecId(ReadString(ms, (int)len));
             }
             else if (id == 0x22B59C) // Language
             {
@@ -271,8 +271,59 @@ class MkvParser
         if (pWidth > 0 && pHeight > 0) track.Resolution = $"{pWidth}x{pHeight}";
     }
 
+    /// <summary>
+    /// Maps Matroska CodecIDs to the same human-readable labels used by the M2TS parser.
+    /// </summary>
+    private static string NormalizeCodecId(string codecId)
+    {
+        string codec = codecId
+            .Replace("V_", "", StringComparison.Ordinal)
+            .Replace("A_", "", StringComparison.Ordinal)
+            .Replace("S_", "", StringComparison.Ordinal);
+
+        return codec switch
+        {
+            "MPEG4/ISO/AVC" or "MPEG4/ISO/AVC/AnnexB" => "H.264/AVC",
+            "MPEGH/ISO/HEVC" or "MPEGH/ISO/HEVC/AnnexB" => "H.265/HEVC",
+            "MPEG4/ISO/SP" or "MPEG4/ISO/ASP" or "MPEG4/MS/V3" => "MPEG-4",
+            "MPEG1" => "MPEG1",
+            "MPEG2" => "MPEG2",
+            "VP8" => "VP8",
+            "VP9" => "VP9",
+            "AV1" => "AV1",
+            "THEORA" => "Theora",
+            "MS/VFW/FOURCC" => "MS/VFW/FOURCC", // refined later from CodecPrivate
+            "TRUEHD" or "MLP" => "TrueHD",
+            "AC3" => "AC3",
+            "EAC3" => "E-AC3",
+            "DTS" => "DTS",
+            "DTS/EXPRESS" => "DTS Express",
+            "DTS/LOSSLESS" or "DTS/HD" => "DTS-HD MA",
+            "AAC" or "AAC/MPEG2/LC" or "AAC/MPEG2/MAIN" or "AAC/MPEG2/SSR"
+                or "AAC/MPEG4/LC" or "AAC/MPEG4/MAIN" or "AAC/MPEG4/LTP"
+                or "AAC/MPEG4/SSR" or "AAC/MPEG4/LC/SBR" => "AAC",
+            "MPEG/L3" => "MP3",
+            "MPEG/L2" => "MP2",
+            "MPEG/L1" => "MP1",
+            "VORBIS" => "Vorbis",
+            "OPUS" => "Opus",
+            "FLAC" => "FLAC",
+            "ALAC" => "ALAC",
+            "PCM" or "PCM/INT/LIT" or "PCM/INT/BIG" or "PCM/FLOAT/IEEE" => "PCM",
+            "MS/ACM" => "MS/ACM", // refined later from CodecPrivate
+            "TTA1" => "TTA",
+            "WAVPACK4" => "WavPack",
+            "VOBSUB" => "VobSub",
+            "HDMV/PGS" => "HDMV/PGS",
+            "TEXT/UTF8" or "TEXT/ASCII" => "SRT",
+            "TEXT/ASS" or "TEXT/SSA" or "ASS" or "SSA" => "ASS",
+            "TEXT/WEBVTT" => "WebVTT",
+            _ => codec
+        };
+    }
+
     // --- Output Formatting ---
-    private static void PrintSummary(ParseContext ctx, bool showAll)
+    private static void PrintSummary(ParseContext ctx, bool showAll, bool showDuration)
     {
         string formatDisplay = ctx.DocType != null && ctx.DocType.Equals("webm", StringComparison.CurrentCultureIgnoreCase) ? "WebM" : "Matroska (MKV)";
         Console.WriteLine($"  {"Format:",-21} {formatDisplay}");
@@ -280,11 +331,17 @@ class MkvParser
         if (ctx.DurationSeconds > 0)
         {
             ctx.BitrateMbps = (ctx.TotalFileSize * 8.0) / ctx.DurationSeconds / 1_000_000.0;
-            TimeSpan t = TimeSpan.FromSeconds(ctx.DurationSeconds);
-            Console.WriteLine($"  {"Duration:",-21} {(int)t.TotalMinutes} min {t.Seconds} sec");
+
+            if (showDuration)
+            {
+                TimeSpan t = TimeSpan.FromSeconds(ctx.DurationSeconds);
+                Console.WriteLine($"  {"Duration:",-21} {(int)t.TotalMinutes} min {t.Seconds} sec");
+            }
+
+            // Always print bitrate when duration is known.
             Console.WriteLine($"  {"Bitrate:",-21} {ctx.BitrateMbps:F2} Mbps");
         }
-        Console.WriteLine("  Tracks:");
+
         foreach (var track in ctx.Tracks)
         {
             // Skip rendering subtitle tracks unless the user explicitly asks for them

@@ -32,12 +32,13 @@ dotnet publish -c Release -o ./publish
 ## Usage
 
 ```text
-mls [-v] [--cold] <path_to_file_or_wildcard>
+mls [-v] [-d] [--cold] <path_to_file_or_wildcard>
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-v`, `--verbose` | For MP4, print structural box names/sizes while parsing |
+| `-d`, `--duration` | Include media duration in the summary (bitrate is always shown when known) |
 | `--cold` | Evict the file from the Windows standby cache before parsing (useful for cold-read timing / I/O experiments) |
 
 Paths may be a single file or a shell-style wildcard (e.g. `*.mp4`).
@@ -50,6 +51,9 @@ mls movie.mp4
 
 # All MKV files in the current directory
 mls *.mkv
+
+# Include duration
+mls -d movie.mp4
 
 # Verbose MP4 box walk
 mls -v clip.mp4
@@ -68,15 +72,17 @@ mls --cold large.m2ts
 
 - Locates the `moov` atom (supports 32- and 64-bit sizes)
 - Reads duration from `mvhd`, with fallback to fragmented duration in `mehd` / `mvex`
-- Walks tracks via `trak` → `tkhd` (resolution), `hdlr` (type), sample entries (`avc1`, `hev1`, `hvc1`, `dvh1`, `mp4a`, encrypted `encv`/`enca`)
+- Walks tracks via `trak` → `tkhd` (display size fallback), `hdlr` (type), sample entries (`avc1`, `hev1`, `hvc1`, `dvh1`, `mp4a`, encrypted `encv`/`enca`)
+- Prefers VisualSampleEntry coded width/height over `tkhd` display size when available
+- Maps sample-entry fourccs (`avc1`, `hev1`, `mp4a`, …) to the same labels as MKV/M2TS; `encv`/`enca` stay as-is with a DRM flag
 - Flags DRM-protected tracks when encrypted sample entries are present
-- Computes average bitrate from file size ÷ duration
+- Computes average bitrate from file size ÷ duration (duration line is opt-in via `-d`)
 
 ### Matroska / WebM (`MkvParser`)
 
 - Validates the EBML header and DocType (`matroska` vs `webm`)
 - Parses `Info` (timecode scale, duration) and `Tracks` only — stops at the first `Cluster` to minimize I/O
-- Maps CodecIDs and, when needed, VFW FOURCC / ACM format tags to human-readable codec names
+- Maps CodecIDs (and VFW FOURCC / ACM tags) to the same human-readable labels used for M2TS
 - Reports track language when present
 
 ### M2TS (`M2tsParser`)

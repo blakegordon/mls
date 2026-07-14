@@ -8,7 +8,7 @@ public static class Mp4Parser
     // NEW: Added "mvex" to the container list so we can step inside it!
     private static readonly string[] ContainerBoxes = ["moov", "trak", "mdia", "minf", "stbl", "stsd", "sinf", "mvex"];
 
-    public static void Parse(string filePath, bool isVerbose)
+    public static void Parse(string filePath, bool isVerbose, bool showDuration)
     {
         using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.RandomAccess);
         if (fs.Length < 8) return;
@@ -59,7 +59,7 @@ public static class Mp4Parser
             using var memoryStream = new MemoryStream(moovBuffer);
             ParseBoxes(memoryStream, Size, 0, isVerbose, context);
 
-            PrintConsolidatedSummary(context);
+            PrintConsolidatedSummary(context, showDuration);
         }
     }
 
@@ -135,13 +135,27 @@ public static class Mp4Parser
 
             if (boxType == "mvhd") ParseMvhd(fs, dataSize, ctx);
             else if (boxType == "mehd") ParseMehd(fs, dataSize, ctx); // NEW: Route to fragmented duration
-            else if (boxType is "encv" or "avc1" or "hev1" or "hvc1" or "dvh1" or "enca" or "mp4a")
+            else if (boxType is "encv" or "avc1" or "avc3" or "hev1" or "hvc1" or "dvh1" or "dvhe" or "vp09" or "av01")
             {
                 if (ctx.CurrentTrack != null)
                 {
-                    ctx.CurrentTrack.Codec = boxType;
+                    ctx.CurrentTrack.Codec = NormalizeSampleEntryCodec(boxType);
                     // FIXED: Only trigger DRM tags for actual encrypted payload atoms
-                    ctx.CurrentTrack.IsDrm = boxType is "encv" or "enca";
+                    ctx.CurrentTrack.IsDrm = boxType is "encv";
+                    // Prefer VisualSampleEntry coded size over tkhd display size (matches MediaInfo).
+                    TryReadVisualSampleEntryResolution(fs, dataSize, ctx.CurrentTrack);
+                }
+                else
+                {
+                    fs.Seek(dataSize, SeekOrigin.Current);
+                }
+            }
+            else if (boxType is "enca" or "mp4a" or "ac-3" or "ec-3" or "Opus" or "fLaC")
+            {
+                if (ctx.CurrentTrack != null)
+                {
+                    ctx.CurrentTrack.Codec = NormalizeSampleEntryCodec(boxType);
+                    ctx.CurrentTrack.IsDrm = boxType is "enca";
                 }
                 fs.Seek(dataSize, SeekOrigin.Current);
             }
@@ -209,13 +223,58 @@ public static class Mp4Parser
             uint w = BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(off, 4));
             uint h = BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(off + 4, 4));
 
-            int width = (int)(w >> 16);
-            int height = (int)(h >> 16);
+            // tkhd stores 16.16 fixed-point display size; round to nearest pixel.
+            int width = (int)((w + 0x8000) >> 16);
+            int height = (int)((h + 0x8000) >> 16);
             if (width > 0 && height > 0)
             {
+                // Sample-entry coded size (set later) is preferred when available.
                 ctx.CurrentTrack.Resolution = $"{width}x{height}";
             }
         }
+    }
+
+    /// <summary>
+    /// Maps ISO BMFF sample-entry fourccs to the same human-readable labels used by MKV/M2TS.
+    /// Encrypted entries (encv/enca) keep their fourcc; the DRM flag carries the protection state.
+    /// </summary>
+    private static string NormalizeSampleEntryCodec(string boxType) => boxType switch
+    {
+        "avc1" or "avc3" => "H.264/AVC",
+        "hev1" or "hvc1" => "H.265/HEVC",
+        "dvh1" or "dvhe" => "Dolby Vision",
+        "vp09" => "VP9",
+        "av01" => "AV1",
+        "mp4a" => "AAC",
+        "ac-3" => "AC3",
+        "ec-3" => "E-AC3",
+        "Opus" => "Opus",
+        "fLaC" => "FLAC",
+        _ => boxType
+    };
+
+    /// <summary>
+    /// Reads width/height from a VisualSampleEntry payload (avc1/hev1/encv/…).
+    /// Layout: SampleEntry(8) + pre_defined/reserved(16) + width(2) + height(2).
+    /// </summary>
+    private static void TryReadVisualSampleEntryResolution(Stream fs, long dataSize, TrackInfo track)
+    {
+        if (dataSize < 28)
+        {
+            fs.Seek(dataSize, SeekOrigin.Current);
+            return;
+        }
+
+        byte[] buf = new byte[28];
+        fs.ReadExactly(buf, 0, 28);
+        ushort width = BinaryPrimitives.ReadUInt16BigEndian(buf.AsSpan(24, 2));
+        ushort height = BinaryPrimitives.ReadUInt16BigEndian(buf.AsSpan(26, 2));
+        if (width > 0 && height > 0)
+        {
+            track.Resolution = $"{width}x{height}";
+        }
+
+        fs.Seek(dataSize - 28, SeekOrigin.Current);
     }
 
     private static void ParseHandler(Stream fs, int dataSize, ParseContext ctx)
@@ -233,16 +292,22 @@ public static class Mp4Parser
         }
     }
 
-    private static void PrintConsolidatedSummary(ParseContext ctx)
+    private static void PrintConsolidatedSummary(ParseContext ctx, bool showDuration)
     {
         Console.WriteLine($"  {"Format:",-21} {ctx.MajorBrand}{ctx.BrandExplanation}");
+
         if (ctx.DurationSeconds > 0)
         {
-            TimeSpan t = TimeSpan.FromSeconds(ctx.DurationSeconds);
-            Console.WriteLine($"  {"Duration:",-21} {(int)t.TotalMinutes} min {t.Seconds} sec");
+            if (showDuration)
+            {
+                TimeSpan t = TimeSpan.FromSeconds(ctx.DurationSeconds);
+                Console.WriteLine($"  {"Duration:",-21} {(int)t.TotalMinutes} min {t.Seconds} sec");
+            }
+
+            // Always print bitrate when duration is known.
             Console.WriteLine($"  {"Bitrate:",-21} {ctx.BitrateMbps:F2} Mbps");
         }
-        Console.WriteLine("  Tracks:");
+
         foreach (var track in ctx.Tracks)
         {
             Console.ForegroundColor = track.HandlerCode == "vide" ? ConsoleColor.Cyan : ConsoleColor.Green;

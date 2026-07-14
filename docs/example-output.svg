@@ -3,7 +3,7 @@
   <rect x="0.5" y="0.5" width="1119" height="339" rx="8" fill="#0d1117" stroke="#30363d"/>
   <g font-family="Consolas, Cascadia Mono, SF Mono, Menlo, Liberation Mono, monospace" font-size="24" xml:space="preserve">
     <text x="22" y="40">
-      <tspan fill="#8b949e">E&gt;</tspan><tspan fill="#c9d1d9"> mls Zero Days_SMIDFD0CCB09-0100-11DB-89CA-0019B92A3933.mp4</tspan>
+      <tspan fill="#8b949e">E&gt;</tspan><tspan fill="#c9d1d9"> mls -d Zero Days_SMIDFD0CCB09-0100-11DB-89CA-0019B92A3933.mp4</tspan>
     </text>
     <text x="22" y="90" fill="#c9d1d9">--- Zero Days_SMIDFD0CCB09-0100-11DB-89CA-0019B92A3933.mp4 ---</text>
     <text x="22" y="118" fill="#c9d1d9">  Format:               iso6 (MP4 Base Media version 6)</text>

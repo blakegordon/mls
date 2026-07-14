@@ -46,7 +46,7 @@ class M2tsParser
         {
             try
             {
-                ProcessFile(file, showAll);
+                ProcessFile(file, showAll, false);
             }
             // FIX: Ensure we don't swallow fatal parsing bugs inside the loop
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException)
@@ -57,7 +57,7 @@ class M2tsParser
         return 0;
     }
 
-    public static void ProcessFile(string file, bool showAll)
+    public static void ProcessFile(string file, bool showAll, bool showDuration)
     {
         Console.WriteLine($"\n--- {Path.GetFileName(file)} ---");
 
@@ -151,7 +151,7 @@ class M2tsParser
             }
         }
 
-        PrintSummary(context, showAll);
+        PrintSummary(context, showAll, showDuration);
     }
 
     // --- The Universal Deep Packet Resolution Decoder ---
@@ -464,19 +464,24 @@ class M2tsParser
         return true;
     }
 
-    private static void PrintSummary(ParseContext ctx, bool showAll)
+    private static void PrintSummary(ParseContext ctx, bool showAll, bool showDuration)
     {
         Console.WriteLine($"  {"Format:",-21} Blu-ray Video (M2TS)");
 
         if (ctx.DurationSeconds > 0)
         {
             ctx.BitrateMbps = (ctx.TotalFileSize * 8.0) / ctx.DurationSeconds / 1_000_000.0;
-            TimeSpan t = TimeSpan.FromSeconds(ctx.DurationSeconds);
-            Console.WriteLine($"  {"Duration:",-21} {(int)t.TotalMinutes} min {t.Seconds} sec");
+
+            if (showDuration)
+            {
+                TimeSpan t = TimeSpan.FromSeconds(ctx.DurationSeconds);
+                Console.WriteLine($"  {"Duration:",-21} {(int)t.TotalMinutes} min {t.Seconds} sec");
+            }
+
+            // Always print bitrate when duration is known.
             Console.WriteLine($"  {"Bitrate:",-21} {ctx.BitrateMbps:F2} Mbps");
         }
 
-        Console.WriteLine("  Tracks:");
         foreach (var track in ctx.Tracks)
         {
             if (!showAll && track.Type == "Subtitle Track") continue;

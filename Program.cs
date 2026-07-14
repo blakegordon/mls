@@ -6,13 +6,15 @@ class Program
     {
         if (args.Length == 0)
         {
-            Console.WriteLine("Usage: mls [-v] [--cold] <path_to_mp4_file_or_wildcard>");
+            Console.WriteLine("Usage: mls [-v] [-d] [--cold] <path_to_mp4_file_or_wildcard>");
             Console.WriteLine("  -v, --verbose    Show structural MP4 boxes during parsing");
+            Console.WriteLine("  -d, --duration   Show media duration in output");
             Console.WriteLine("  --cold           Force evict the file from the Windows Standby Cache before parsing");
             return 1;
         }
 
         bool isVerbose = args.Contains("-v") || args.Contains("--verbose");
+        bool showDuration = args.Contains("-d") || args.Contains("--duration");
         bool isColdRun = args.Contains("--cold");
         string? targetPattern = args.LastOrDefault(a => !a.StartsWith('-'));
 
@@ -57,13 +59,13 @@ class Program
                 switch (Path.GetExtension(file).ToLowerInvariant())
                 {
                     case ".mp4":
-                        Mp4Parser.Parse(file, isVerbose);
+                        Mp4Parser.Parse(file, isVerbose, showDuration);
                         break;
                     case ".mkv":
-                        MkvParser.ProcessFile(file, isVerbose);
+                        MkvParser.ProcessFile(file, isVerbose, showDuration);
                         break;
                     case ".m2ts":
-                        M2tsParser.ProcessFile(file, isVerbose);
+                        M2tsParser.ProcessFile(file, isVerbose, showDuration);
                         break;
                     default:
                         Console.WriteLine($"{file}: Skipped (unsupported file extension)");
