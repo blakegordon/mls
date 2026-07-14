@@ -126,9 +126,12 @@ class M2tsParser
             if (fs.Position > 50_000_000) break;
         }
 
-        if (context.PcrPid != -1 && context.TotalFileSize > 10_000_000)
+        // Last PCR is almost always in the final packets; a small EOF window is enough
+        // for duration/bitrate and avoids reading a multi-MB tail on every file.
+        const long TailScanBytes = 512 * 1024;
+        if (context.PcrPid != -1 && context.TotalFileSize > TailScanBytes)
         {
-            long seekPos = context.TotalFileSize - 5_000_000;
+            long seekPos = context.TotalFileSize - TailScanBytes;
             seekPos -= seekPos % PacketSize;
             fs.Seek(seekPos, SeekOrigin.Begin);
 
