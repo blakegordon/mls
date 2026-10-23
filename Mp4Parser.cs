@@ -78,6 +78,7 @@ public static class Mp4Parser
                 byte[] ext = new byte[8];
                 fs.ReadExactly(ext, 0, 8);
                 size = BinaryPrimitives.ReadInt64BigEndian(ext);
+                if (size < 16) break;
                 if (type == "moov") return (fs.Position - 16, size);
                 fs.Seek(size - 16, SeekOrigin.Current);
             }
@@ -88,6 +89,7 @@ public static class Mp4Parser
             }
             else
             {
+                if (size < 8) break;
                 if (type == "moov") return (fs.Position - 8, size);
                 fs.Seek(size - 8, SeekOrigin.Current);
             }
@@ -114,6 +116,18 @@ public static class Mp4Parser
                 boxSize = BinaryPrimitives.ReadInt64BigEndian(ext);
                 dataSize = boxSize - 16;
             }
+            else if (boxSize == 0)
+            {
+                // Size 0 = extends to end of enclosing container.
+                boxSize = endPosition - (fs.Position - 8);
+                dataSize = boxSize - 8;
+            }
+
+            // Corrupt/padding box: stop, otherwise we'd seek backwards and loop forever.
+            long headerLen = (header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 1) ? 16 : 8;
+            if (dataSize < 0 || boxSize < headerLen || fs.Position + dataSize > endPosition)
+                break;
+
             if (boxType == "moof" || boxType == "mdat")
             {
                 fs.Seek(dataSize, SeekOrigin.Current);
