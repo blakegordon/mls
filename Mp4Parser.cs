@@ -299,7 +299,7 @@ public static class Mp4Parser
             char c2 = (char)(0x60 + ((packed >> 5) & 0x1F));
             char c3 = (char)(0x60 + (packed & 0x1F));
             string lang = new string([c1, c2, c3]);
-            if (lang is not ("und" or "\0\0\0"))
+            if (lang.All(char.IsAsciiLetterLower) && lang != "und")
                 ctx.CurrentTrack.Language = lang;
         }
 
@@ -440,6 +440,8 @@ public static class Mp4Parser
         foreach (var track in ctx.Tracks)
         {
             if (!showSubtitles && track.Type == "Subtitle Track") continue;
+            // QuickTime timecode metadata track, not user-facing media.
+            if (track.HandlerCode == "tmcd") continue;
 
             Console.ForegroundColor = track.HandlerCode == "vide" ? ConsoleColor.Cyan
                 : track.Type == "Subtitle Track" ? ConsoleColor.Gray
